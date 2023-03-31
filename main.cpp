@@ -4,24 +4,28 @@
 #include <LSM6DS3.h>
 #include <Adafruit_BMP280.h>
 
+#define DEBUG false
 #define PIN_VBAT (32u)
 const double vRef = 3.3; // 3.3V regulator output is ADC reference voltage
 
 BLEService stm32ServerService; 
 BLECharacteristic stm32ServerCharacteristicImu; 
 BLECharacteristic stm32ServerCharacteristicPressure; 
+BLECharacteristic stm32ServerCharacteristicBattery; 
 const String STM_SERVER_NAME = "STM32 Hyperloop"; 
 const char STM_SERVICE_UUID[] = "a000";
 const char IMU_CHARACTERISTIC_UUID[] = "a001";
 const char PRESSURE_CHARACTERISTIC_UUID[] = "a002";
+const char BATT_CHARACTERISTIC_UUID[] = "a003";
 Adafruit_BMP280 bmp;
-
+bool temp = false;
 
 LSM6DS3Core myIMU(I2C_MODE, 0x6A);          //I2C device address 0x6A
 uint8_t dataToWrite = 0;                    //Temporary variable
 uint16_t errorsAndWarnings = 0;
 u_int8_t test = 0x04;
 u_int8_t pressure;
+u_int8_t battery;
 int reset_counter = 0;
 
 
@@ -30,35 +34,55 @@ void setCharacteristics(BLEService service) {
     BLECharacteristic characteristic = service.characteristic(i);
     if (strcmp(IMU_CHARACTERISTIC_UUID, characteristic.uuid()) == 0) {
       stm32ServerCharacteristicImu = characteristic;
-      Serial.println("-----------------------------------");
-      Serial.println("Set stm32ServerCharacteristicImu.");
-      Serial.println("-----------------------------------");
+      if (DEBUG) {
+        Serial.println("-----------------------------------");
+        Serial.println("Set stm32ServerCharacteristicImu.");
+        Serial.println("-----------------------------------");
+      }
     }
     if (strcmp(PRESSURE_CHARACTERISTIC_UUID, characteristic.uuid()) == 0) {
       stm32ServerCharacteristicPressure = characteristic;
-      Serial.println("-----------------------------------");
-      Serial.println("Set stm32ServerCharacteristicPressure.");
-      Serial.println("-----------------------------------");
+      if (DEBUG) {
+        Serial.println("-----------------------------------");
+        Serial.println("Set stm32ServerCharacteristicPressure.");
+        Serial.println("-----------------------------------");
+      }
+    }
+    if (strcmp(BATT_CHARACTERISTIC_UUID, characteristic.uuid()) == 0) {
+      stm32ServerCharacteristicBattery = characteristic;
+      if (DEBUG) {
+        Serial.println("-----------------------------------");
+        Serial.println("Set stm32ServerCharacteristicBattery.");
+        Serial.println("-----------------------------------");
+      }
     }
   }
 }
 
 void setServices(BLEDevice peripheral) {
-  Serial.println("Connecting ...");
+  if (DEBUG) {
+    Serial.println("Connecting ...");
+  }
 
   if (peripheral.connect()) {
-    Serial.println("Connected");
+    if (DEBUG) {
+      Serial.println("Connected");
+    }
   } else {
-    Serial.println("Failed to connect!");
-    
+    if (DEBUG) {
+      Serial.println("Error connecting.");
+    }    
     return;
   }
 
-  Serial.println("Discovering attributes ...");
   if (peripheral.discoverAttributes()) {
-    Serial.println("Attributes discovered");
+    if (DEBUG) {
+      Serial.println("Attributes discovered");
+    }
   } else {
-    Serial.println("Attribute discovery failed!");
+    if (DEBUG) {
+      Serial.println("Attribute discovery failed!");
+    }
     peripheral.disconnect();
     return;
   }
@@ -71,9 +95,11 @@ void setServices(BLEDevice peripheral) {
     BLEService service = peripheral.service(i);
     if (strcmp(STM_SERVICE_UUID, service.uuid()) == 0) {
       stm32ServerService = service;
-      Serial.println("-----------------------------------");
-      Serial.println("Set stm32ServerService.");
-      Serial.println("-----------------------------------");
+      if (DEBUG) {
+        Serial.println("-----------------------------------");
+        Serial.println("Set stm32ServerService.");
+        Serial.println("-----------------------------------");
+      }
       return;
     }
   }
@@ -124,6 +150,7 @@ double getBatteryVoltage() {
 int getBatteryPercentage() {
   double maxVoltage = 4.20;
   double currentVoltage = getBatteryVoltage();
+  battery = (int) currentVoltage/maxVoltage * 100;
   return (int) currentVoltage/maxVoltage * 100;
 }
 
@@ -132,24 +159,29 @@ void softReset() {
 }
 
 void setup() {
-pinMode(LED_BUILTIN, OUTPUT);
-digitalWrite(LED_BUILTIN, LOW);
-pinMode(P0_14, OUTPUT);
-digitalWrite(P0_14, LOW);
 
-  if (!bmp.begin(0x77)) {
-    Serial.println("Could not find a valid BMP280 sensor, check wiring!");
-  }
-
+if (DEBUG){
   Serial.begin(9600);
   while (!Serial);
-  Serial.print("\nStartup.....\n");
+}
+pinMode(LED_BUILTIN, OUTPUT);
+digitalWrite(LED_BUILTIN, LOW);
+
+  if (!bmp.begin(0x77)) {
+    if (DEBUG) {
+        Serial.println("Could not find a valid BMP280 sensor, check wiring!");
+    }
+  }
 
       //Call .beginCore() to configure the IMU
     if (myIMU.beginCore() != 0) {
+        if (DEBUG) {
         Serial.print("\nDevice Error.\n");
+        }
     } else {
-        Serial.print("\nDevice OK.\n");
+        if (DEBUG) {
+        Serial.print("\nDevice Good.\n");
+        }
     }
 
     //Setup the accelerometer******************************
@@ -162,34 +194,45 @@ digitalWrite(P0_14, LOW);
     errorsAndWarnings += myIMU.writeRegister(LSM6DS3_ACC_GYRO_CTRL1_XL, dataToWrite);
 
   // begin initialization
-  if (!BLE.begin()) {
-    Serial.println("Failed to startup!");
-    while (1);
+  while (!BLE.begin()) {
+    if (DEBUG) {
+        Serial.print("\nFailed to startup!.\n");
+    }
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(100);
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(100);
   }
 
   BLE.scan();
 }
 
 void loop() {
-delay(5000);
-Serial.print("Battery percentage: ");
-Serial.println(getBatteryPercentage());
-
+  digitalWrite(LED_BUILTIN, LOW);
   BLEDevice peripheral = BLE.available();
   if (peripheral) {
     reset_counter++;
-    Serial.print("Searching... ");
-    Serial.println(peripheral.address());
-    if (reset_counter > 5000) {
+    if (DEBUG) {
+      Serial.print("Searching... ");
+      Serial.println(peripheral.address());
+    }
+    if (reset_counter > 1000) {
+      for (int i = 0; i < 20; i++) {
+          digitalWrite(LED_BUILTIN, LOW);
+          delay(25);
+          digitalWrite(LED_BUILTIN, HIGH);
+          delay(25);
+      }
       NVIC_SystemReset();
     }
     if (peripheral.localName() == STM_SERVER_NAME) {
       BLE.stopScan();
       setServices(peripheral);                                          // <-- sets the service
       setCharacteristics(stm32ServerService);                           // <-- sets the characteristic 
+      digitalWrite(LED_BUILTIN, HIGH);
       while (1) {
         pressure = (bmp.readPressure() / 100.0F)*0.1;
-
+        getBatteryPercentage();
           if (stm32ServerCharacteristicPressure.canWrite()) {
               stm32ServerCharacteristicPressure.writeValue(pressure);
           }       
@@ -197,6 +240,11 @@ Serial.println(getBatteryPercentage());
           if (stm32ServerCharacteristicImu.canWrite()) {
               sendImuData(getIMUData());
           }   
+
+          if (stm32ServerCharacteristicBattery.canWrite()) {
+              stm32ServerCharacteristicBattery.writeValue(battery);
+          }   
+
           delay(20);      // ~50Hz
           if (!BLE.connected()) {
             NVIC_SystemReset();
